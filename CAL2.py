@@ -36,53 +36,56 @@ with col_rate1:
 
 ot_options = [0,2,8]
 
-# --- ส่วนที่ 3: เตรียมข้อมูลตารางตามวันที่เลือกจริง ---
-# สร้างรายการวันที่และชื่อวัน
-date_list = []
-day_names_th = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]
+# --- 3. ส่วนแสดงตารางสะสม และ รวมยอดทั้งหมด ---
+st.divider()
+if not st.session_state.salary_db.empty:
+    st.subheader("📋 รายการบันทึกทั้งหมดของเดือนนี้")
 
-for i in range(num_days):
-    current_dt = start_date + timedelta(days=i)
-    day_name = day_names_th[current_dt.weekday()]
-    date_str = f"{current_dt.strftime('%d/%m/%Y')} ({day_name})"
-    date_list.append(date_str)
+    # ฟังก์ชันสำหรับกำหนดสีพื้นหลัง (วันอาทิตย์ = สีเหลือง)
+    def highlight_sunday(row):
+        # ตรวจสอบชื่อวันจากคอลัมน์ "วันที่"
+        # แปลง string วันที่กลับเป็น datetime object เพื่อเช็คว่าเป็นวันอาทิตย์หรือไม่
+        date_obj = datetime.strptime(row["วันที่"], "%d/%m/%Y")
+        if date_obj.weekday() == 6:  # 6 คือวันอาทิตย์
+            return ['background-color: #FFFF00; color: black'] * len(row)
+        return [''] * len(row)
 
-# เช็ค Session State เพื่อสร้างตารางใหม่เมื่อมีการเปลี่ยนช่วงวันที่
-if 'df_input' not in st.session_state or len(st.session_state.df_input) != num_days:
-    init_data = {
-        "วันที่": date_list,
-        "มาทำงาน": [False] * num_days,
-        "มี OT": [False] * num_days,
-        "x1": [0.0] * num_days, "x1.5": [0.0] * num_days, "x2": [0.0] * num_days,
-        "x2.5": [0.0] * num_days, "x3": [0.0] * num_days, "x6": [0.0] * num_days,
-    }
-    st.session_state.df_input = pd.DataFrame(init_data)
-else:
-    # อัปเดตเฉพาะรายชื่อวันที่หากจำนวนวันเท่าเดิมแต่ช่วงวันที่เปลี่ยน
-    st.session_state.df_input["วันที่"] = date_list
+    # นำตารางมาใส่สีไฮไลต์
+    styled_df = st.session_state.salary_db.style.apply(highlight_sunday, axis=1)
 
-# ฟังก์ชันสำหรับระบายสีวันอาทิตย์
-def highlight_sunday(row):
-    return ['background-color: #ffff99' if 'อาทิตย์' in str(row['วันที่']) else '' for _ in row]
+    # แสดงตาราง (หมายเหตุ: st.data_editor ในปัจจุบันยังไม่รองรับการแสดงสีพร้อมแก้ไขแบบ Real-time เป๊ะๆ
+    # แนะนำให้ใช้ st.dataframe แสดงผลที่มีสี และใช้ st.data_editor แยกหากต้องการแก้ข้อมูล)
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    
+    # หากต้องการแก้ไขข้อมูล ให้กดปุ่มนี้เพื่อเปิดโหมดแก้ไข
+    with st.expander("🛠 คลิกที่นี่เพื่อแก้ไขข้อมูลในตาราง"):
+        edited_df = st.data_editor(st.session_state.salary_db, use_container_width=True, hide_index=True)
+        
+        # อัปเดต Logic การคำนวณใหม่เมื่อมีการแก้ (เหมือนที่เคยทำก่อนหน้า)
+        if not edited_df.equals(st.session_state.salary_db):
+            edited_df["เงินรายวัน"] = pd.to_numeric(edited_df["เงินรายวัน"], errors='coerce').fillna(0)
+            edited_df["OT(ชม.)"] = pd.to_numeric(edited_df["OT(ชม.)"], errors='coerce').fillna(0)
+            edited_df["ค่าอาหาร"] = pd.to_numeric(edited_df["ค่าอาหาร"], errors='coerce').fillna(0)
+            multiplier_num = edited_df["ตัวคูณ"].str.replace('x', '').astype(float)
+            edited_df["ค่า OT"] = edited_df["OT(ชม.)"] * multiplier_num * rate_per_hour
+            edited_df["รวมสุทธิ"] = edited_df["เงินรายวัน"] + edited_df["ค่า OT"] + edited_df["ค่าอาหาร"]
+            
+            st.session_state.salary_db = edited_df
+            st.rerun()
 
-# แสดงตารางแบบ Data Editor
-st.write("### 📝 ใบลงเวลา")
-edited_df = st.data_editor(
-    st.session_state.df_input.style.apply(highlight_sunday, axis=1), # ใส่สีเหลือง
-    hide_index=True,
-    use_container_width=True,
-    column_config={
-        "วันที่": st.column_config.TextColumn("วันที่", disabled=True, width="medium"),
-        "มาทำงาน": st.column_config.CheckboxColumn("มาทำงาน"),
-        "มี OT": st.column_config.CheckboxColumn("มี OT"),
-        "x1": st.column_config.SelectboxColumn("x1", options=ot_options),
-        "x1.5": st.column_config.SelectboxColumn("x1.5", options=ot_options),
-        "x2": st.column_config.SelectboxColumn("x2", options=ot_options),
-        "x2.5": st.column_config.SelectboxColumn("x2.5", options=ot_options),
-        "x3": st.column_config.SelectboxColumn("x3", options=ot_options),
-        "x6": st.column_config.SelectboxColumn("x6", options=ot_options),
-    }
-)
+    # --- ส่วนรวบรวมยอดรวมสะสมด้านล่าง ---
+    st.markdown("### 💰 สรุปยอดรวมสะสม")
+    sum_c1, sum_c2, sum_c3, sum_c4 = st.columns(4)
+    
+    total_wage = pd.to_numeric(st.session_state.salary_db["เงินรายวัน"]).sum()
+    total_ot = pd.to_numeric(st.session_state.salary_db["ค่า OT"]).sum()
+    total_meal = pd.to_numeric(st.session_state.salary_db["ค่าอาหาร"]).sum()
+    total_all = pd.to_numeric(st.session_state.salary_db["รวมสุทธิ"]).sum()
+    
+    sum_c1.metric("รวมเงินรายวัน", f"{total_wage:,.2f} ฿")
+    sum_c2.metric("รวมค่า OT", f"{total_ot:,.2f} ฿")
+    sum_c3.metric("รวมค่าอาหาร", f"{total_meal:,.2f} ฿")
+    sum_c4.metric("ยอดรับสุทธิทั้งหมด", f"{total_all:,.2f} ฿")
 
 # --- ส่วนที่ 4: Logic การคำนวณ (เหมือนเดิมแต่แม่นยำขึ้น) ---
 results = []
@@ -111,5 +114,6 @@ m1.metric("💰 ค่าจ้างปกติรวม", f"{res_df['basic'].
 m2.metric("⚡ OT รวม", f"{res_df['ot'].sum():,.2f}")
 m3.metric("📊 KPI รวม", f"{res_df['kpi'].sum():,.2f}")
 m4.metric("🍱 ค่าอาหารรวม", f"{res_df['meal'].sum():,.2f}")
+
 
 st.success(f"## 🏆 รายรับสุทธิรวมในช่วงวันที่เลือก: {res_df['total'].sum():,.2f} บาท")
